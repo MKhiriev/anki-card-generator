@@ -5,10 +5,15 @@ import re
 import sys
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 import requests
 
+
+# =========================
+# LLM SYSTEM PROMPT
+# =========================
 
 SYSTEM_PROMPT = """Ты — движок дистилляции знаний для Anki.
 
@@ -57,6 +62,10 @@ SYSTEM_PROMPT = """Ты — движок дистилляции знаний д�
 """
 
 
+# =========================
+# DATA MODEL
+# =========================
+
 @dataclass
 class Article:
     title: str
@@ -67,6 +76,46 @@ class Article:
     slug: str
 
 
+# =========================
+# INPUT VALIDATION (NEW)
+# =========================
+
+def validate_input_file(path_str: str) -> Path:
+    """
+    Validates CLI input path and returns normalized Path.
+    Exits with code 1 on validation errors.
+    """
+    input_path = Path(path_str).expanduser()
+
+    if not input_path.exists():
+        print(f"Error: file does not exist: {input_path}", file=sys.stderr)
+        sys.exit(1)
+
+    if not input_path.is_file():
+        print(f"Error: not a file: {input_path}", file=sys.stderr)
+        sys.exit(1)
+
+    if input_path.suffix.lower() not in (".ymlmd", ".md"):
+        print(
+            f"Error: invalid file extension '{input_path.suffix}'. Expected .ymlmd or .md",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        with input_path.open("r", encoding="utf-8") as _:
+            pass
+    except Exception as e:
+        print(f"Error: cannot read file '{input_path}': {e}", file=sys.stderr)
+        sys.exit(1)
+
+    return input_path.resolve()
+
+
+# =========================
+# CORE: PARSE / CHUNK
+# =========================
+
 def slugify(s: str) -> str:
     s = s.strip().lower()
     s = re.sub(r"\s+", "-", s)
@@ -76,7 +125,8 @@ def slugify(s: str) -> str:
 
 
 def parse_ymlmd(path: str) -> Article:
-    raw = open(path, "r", encoding="utf-8").read()
+    with open(path, "r", encoding="utf-8") as f:
+        raw = f.read()
 
     # Expect:
     # ---
@@ -102,7 +152,6 @@ def parse_ymlmd(path: str) -> Article:
         k = k.strip()
         v = v.strip()
 
-        # Simple tags: [a, b, c]
         if k == "tags":
             if v.startswith("[") and v.endswith("]"):
                 inner = v[1:-1].strip()
@@ -112,7 +161,6 @@ def parse_ymlmd(path: str) -> Article:
                     parts = [p.strip().strip('"').strip("'") for p in inner.split(",")]
                     meta[k] = [p for p in parts if p]
             else:
-                # single tag
                 meta[k] = [v.strip('"').strip("'")] if v else []
         else:
             meta[k] = v.strip('"').strip("'")
@@ -123,12 +171,14 @@ def parse_ymlmd(path: str) -> Article:
 
     source_url = str(meta.get("source_url", "")).strip()
     deck = str(meta.get("deck", "Inbox::Articles")).strip()
+
     tags = meta.get("tags", [])
     if not isinstance(tags, list):
         tags = []
 
     slug = slugify(title)
-    # add stable tags
+
+    # stable tags
     tags = list(tags) + [f"article:{slug}"]
     if source_url:
         try:
@@ -149,7 +199,6 @@ def parse_ymlmd(path: str) -> Article:
 
 
 def chunk_paragraphs(text: str, max_chars: int = 2200, overlap_paras: int = 1) -> List[str]:
-    # Normalize newlines
     text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
     paras = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
     if not paras:
@@ -166,15 +215,14 @@ def chunk_paragraphs(text: str, max_chars: int = 2200, overlap_paras: int = 1) -
         cur = []
         cur_len = 0
 
-    for i, p in enumerate(paras):
+    for p in paras:
         add_len = len(p) + (2 if cur else 0)
         if cur and (cur_len + add_len > max_chars):
             flush()
-            # overlap: take last N paragraphs from previous chunk (if any)
             if overlap_paras > 0 and chunks:
                 prev_paras = chunks[-1].split("\n\n")
                 overlap = prev_paras[-overlap_paras:]
-                cur = overlap[:]  # start new chunk with overlap
+                cur = overlap[:]
                 cur_len = sum(len(x) for x in cur) + 2 * (len(cur) - 1)
 
         cur.append(p)
@@ -183,6 +231,10 @@ def chunk_paragraphs(text: str, max_chars: int = 2200, overlap_paras: int = 1) -
     flush()
     return chunks
 
+
+# =========================
+# CORE: OLLAMA + JSON
+# =========================
 
 def ollama_chat(ollama_url: str, model: str, system: str, user: str, temperature: float = 0.2) -> str:
     payload = {
@@ -202,13 +254,11 @@ def ollama_chat(ollama_url: str, model: str, system: str, user: str, temperature
 
 def parse_json_array_strict(s: str) -> List[Dict[str, Any]]:
     s = s.strip()
-    # Guard against code fences
     s = re.sub(r"^```(?:json)?\s*", "", s)
     s = re.sub(r"\s*```$", "", s)
     obj = json.loads(s)
     if not isinstance(obj, list):
         raise ValueError("LLM output JSON must be an array.")
-    # Ensure objects
     out: List[Dict[str, Any]] = []
     for x in obj:
         if isinstance(x, dict):
@@ -216,12 +266,41 @@ def parse_json_array_strict(s: str) -> List[Dict[str, Any]]:
     return out
 
 
+def build_user_prompt(article: Article, chunk_text: str, chunk_index: int) -> str:
+    meta = {
+        "title": article.title,
+        "source_url": article.source_url,
+        "article_slug": article.slug,
+        "chunk": chunk_index,
+        "base_tags": article.tags,
+    }
+    return (
+        "Метаданные (JSON):\n"
+        + json.dumps(meta, ensure_ascii=False)
+        + "\n\n"
+        "Текст фрагмента:\n"
+        + chunk_text
+        + "\n\n"
+        "Сгенерируй карточки согласно правилам. Верни ТОЛЬКО JSON-массив."
+    )
+
+
+def repair_prompt(bad_output: str) -> str:
+    return (
+        "Твой предыдущий ответ НЕ является валидным JSON-массивом.\n"
+        "Исправь его и верни ТОЛЬКО валидный JSON-массив (array) без текста и без Markdown.\n\n"
+        "Плохой вывод:\n"
+        + bad_output
+    )
+
+
+# =========================
+# CARD VALIDATION / DEDUPE
+# =========================
+
 def normalize_key(card: Dict[str, Any]) -> str:
     t = str(card.get("type", "")).strip().lower()
-    if t == "cloze":
-        base = str(card.get("text", ""))
-    else:
-        base = str(card.get("front", ""))
+    base = str(card.get("text" if t == "cloze" else "front", ""))
     base = base.strip().lower()
     base = re.sub(r"\s+", " ", base)
     return f"{t}:{base}"
@@ -248,12 +327,10 @@ def validate_card(card: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         back = str(card.get("back", "")).strip()
         if not front or not back:
             return None
-        # basic length sanity
         if len(front) > 400 or len(back) > 1200:
             return None
         card["front"] = front
         card["back"] = back
-        # remove cloze-only field if present
         card.pop("text", None)
         return card
 
@@ -272,6 +349,10 @@ def validate_card(card: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     return None
 
+
+# =========================
+# ANKI CONNECT
+# =========================
 
 def anki_invoke(anki_url: str, action: str, params: Dict[str, Any]) -> Any:
     payload = {"action": action, "version": 6, "params": params}
@@ -309,37 +390,13 @@ def add_note_cloze(anki_url: str, deck: str, text: str, tags: List[str]) -> int:
     return anki_invoke(anki_url, "addNote", {"note": note})
 
 
-def build_user_prompt(article: Article, chunk_text: str, chunk_index: int) -> str:
-    meta = {
-        "title": article.title,
-        "source_url": article.source_url,
-        "article_slug": article.slug,
-        "chunk": chunk_index,
-        "base_tags": article.tags,
-    }
-    return (
-        "Метаданные (JSON):\n"
-        + json.dumps(meta, ensure_ascii=False)
-        + "\n\n"
-        "Текст фрагмента:\n"
-        + chunk_text
-        + "\n\n"
-        "Сгенерируй карточки согласно правилам. Верни ТОЛЬКО JSON-массив."
-    )
+# =========================
+# MAIN
+# =========================
 
-
-def repair_prompt(bad_output: str) -> str:
-    return (
-        "Твой предыдущий ответ НЕ является валидным JSON-массивом.\n"
-        "Исправь его и верни ТОЛЬКО валидный JSON-массив (array) без текста и без Markdown.\n\n"
-        "Плохой вывод:\n"
-        + bad_output
-    )
-
-
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser(description="Convert article.ymlmd -> Anki via Ollama + AnkiConnect")
-    ap.add_argument("input", help="Path to article in ymlmd format")
+    ap.add_argument("input", help="Path to article in ymlmd format (.ymlmd or .md)")
     ap.add_argument("--model", default="qwen2.5:7b-instruct", help="Ollama model name")
     ap.add_argument("--ollama", default="http://127.0.0.1:11434", help="Ollama base URL")
     ap.add_argument("--anki", default="http://127.0.0.1:8765", help="AnkiConnect URL")
@@ -350,7 +407,16 @@ def main():
     ap.add_argument("--sleep", type=float, default=0.0, help="Sleep seconds between chunk requests")
     args = ap.parse_args()
 
-    article = parse_ymlmd(args.input)
+    # NEW: validate input file early
+    input_path = validate_input_file(args.input)
+
+    # parse + chunk
+    try:
+        article = parse_ymlmd(str(input_path))
+    except Exception as e:
+        print(f"Error: failed to parse ymlmd '{input_path}': {e}", file=sys.stderr)
+        sys.exit(2)
+
     chunks = chunk_paragraphs(article.text, max_chars=args.max_chars, overlap_paras=args.overlap)
     if not chunks:
         print("No text chunks produced.", file=sys.stderr)
@@ -362,33 +428,39 @@ def main():
     for idx, chunk in enumerate(chunks, start=1):
         user_prompt = build_user_prompt(article, chunk, idx)
 
-        content = None
-        last_err = None
-        for attempt in range(1, 4):
+        content: Optional[List[Dict[str, Any]]] = None
+        last_err: Optional[Exception] = None
+        last_raw: str = ""
+
+        for _attempt in range(1, 4):
             try:
-                raw = ollama_chat(args.ollama, args.model, SYSTEM_PROMPT, user_prompt, temperature=args.temperature)
-                cards = parse_json_array_strict(raw)
-                content = cards
+                last_raw = ollama_chat(args.ollama, args.model, SYSTEM_PROMPT, user_prompt, temperature=args.temperature)
+                content = parse_json_array_strict(last_raw)
                 break
             except Exception as e:
                 last_err = e
                 # repair attempt using the same model
                 try:
-                    raw2 = ollama_chat(args.ollama, args.model, SYSTEM_PROMPT, repair_prompt(raw), temperature=0.0)
-                    cards2 = parse_json_array_strict(raw2)
-                    content = cards2
+                    repaired = ollama_chat(
+                        args.ollama,
+                        args.model,
+                        SYSTEM_PROMPT,
+                        repair_prompt(last_raw),
+                        temperature=0.0,
+                    )
+                    content = parse_json_array_strict(repaired)
                     break
                 except Exception as e2:
                     last_err = e2
-                    # continue retries
+
         if content is None:
             print(f"[chunk {idx}] failed after retries: {last_err}", file=sys.stderr)
             continue
 
-        # attach/merge tags and validate
         for c in content:
             if not isinstance(c, dict):
                 continue
+
             # merge tags + enforce source.chunk
             c_tags = c.get("tags", [])
             if not isinstance(c_tags, list):
@@ -405,6 +477,7 @@ def main():
             vc = validate_card(c)
             if not vc:
                 continue
+
             k = normalize_key(vc)
             if k in seen:
                 continue
@@ -423,13 +496,11 @@ def main():
 
     added = 0
     for c in all_cards:
-        t = c["type"]
-        tags = c.get("tags", [])
         try:
-            if t == "qa":
-                add_note_basic(args.anki, article.deck, c["front"], c["back"], tags)
+            if c["type"] == "qa":
+                add_note_basic(args.anki, article.deck, c["front"], c["back"], c.get("tags", []))
             else:
-                add_note_cloze(args.anki, article.deck, c["text"], tags)
+                add_note_cloze(args.anki, article.deck, c["text"], c.get("tags", []))
             added += 1
         except Exception as e:
             print(f"Failed to add note: {e}", file=sys.stderr)
