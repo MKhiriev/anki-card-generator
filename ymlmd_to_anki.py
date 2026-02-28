@@ -15,7 +15,7 @@ import requests
 # LLM SYSTEM PROMPT
 # =========================
 
-SYSTEM_PROMPT = """Ты — движок дистилляции знаний для Anki.
+SYSTEM_PROMPT = r'''Ты — движок дистилляции знаний для Anki.
 
 Задача: по данному фрагменту текста сгенерировать высококачественные атомарные карточки Anki на русском языке.
 
@@ -59,7 +59,7 @@ SYSTEM_PROMPT = """Ты — движок дистилляции знаний д�
   "tags": ["..."],
   "source": {"chunk": 1}
 }
-"""
+'''
 
 
 # =========================
@@ -85,6 +85,15 @@ class AnkiConfig:
     field_front: str = "Front"
     field_back: str = "Back"
     field_cloze_text: str = "Text"
+
+
+@dataclass
+class GeneratorConfig:
+    model: str = "qwen2.5:7b-instruct"
+    ollama_url: str = "http://127.0.0.1:11434"
+    temperature: float = 0.2
+    max_chars: int = 2200
+    overlap: int = 1
 
 
 # =========================
@@ -139,15 +148,10 @@ def validate_optional_config_file(path_str: str) -> Optional[Path]:
 
 
 # =========================
-# CONFIG LOADING (NEW)
+# CONFIG LOADING
 # =========================
 
 def load_anki_config(config_path: Optional[Path]) -> AnkiConfig:
-    """
-    Loads AnkiConfig from JSON file.
-    Missing file -> defaults.
-    Missing keys -> defaults for those keys.
-    """
     cfg = AnkiConfig()
 
     if config_path is None:
@@ -162,7 +166,6 @@ def load_anki_config(config_path: Optional[Path]) -> AnkiConfig:
         print(f"Error: invalid config JSON '{config_path}': {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Only allow known keys
     def get_str(key: str, default: str) -> str:
         v = data.get(key, default)
         return str(v).strip() if v is not None else default
@@ -174,6 +177,55 @@ def load_anki_config(config_path: Optional[Path]) -> AnkiConfig:
     cfg.field_front = get_str("field_front", cfg.field_front)
     cfg.field_back = get_str("field_back", cfg.field_back)
     cfg.field_cloze_text = get_str("field_cloze_text", cfg.field_cloze_text)
+
+    return cfg
+
+
+def load_generator_config(config_path: Optional[Path]) -> GeneratorConfig:
+    cfg = GeneratorConfig()
+
+    if config_path is None:
+        return cfg
+
+    try:
+        raw = config_path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("Config JSON must be an object")
+    except Exception as e:
+        print(f"Error: invalid generator config JSON '{config_path}': {e}", file=sys.stderr)
+        sys.exit(1)
+
+    def get_str(key: str, default: str) -> str:
+        v = data.get(key, default)
+        return str(v).strip() if v is not None else default
+
+    def get_int(key: str, default: int) -> int:
+        v = data.get(key, default)
+        try:
+            return int(v)
+        except Exception:
+            return default
+
+    def get_float(key: str, default: float) -> float:
+        v = data.get(key, default)
+        try:
+            return float(v)
+        except Exception:
+            return default
+
+    cfg.model = get_str("model", cfg.model)
+    cfg.ollama_url = get_str("ollama_url", cfg.ollama_url)
+    cfg.temperature = get_float("temperature", cfg.temperature)
+    cfg.max_chars = get_int("max_chars", cfg.max_chars)
+    cfg.overlap = get_int("overlap", cfg.overlap)
+
+    if cfg.max_chars < 200:
+        cfg.max_chars = 200
+    if cfg.overlap < 0:
+        cfg.overlap = 0
+    if cfg.temperature < 0:
+        cfg.temperature = 0.0
 
     return cfg
 
@@ -457,24 +509,25 @@ def main() -> None:
 
     ap.add_argument("input", help="Path to article in ymlmd format (.ymlmd or .md)")
 
-    # NEW: anki config file
+    # Config files
     ap.add_argument(
         "--anki-config",
         default="anki_config.json",
         help="Path to Anki config JSON (default: ./anki_config.json). Use empty string to disable.",
     )
+    ap.add_argument(
+        "--gen-config",
+        default="generator_config.json",
+        help="Path to generator config JSON (default: ./generator_config.json). Use empty string to disable.",
+    )
 
-    # LLM / runtime
-    ap.add_argument("--model", default="qwen2.5:7b-instruct", help="Ollama model name")
-    ap.add_argument("--ollama", default="http://127.0.0.1:11434", help="Ollama base URL")
-
-    # CLI override for Anki URL (optional)
-    ap.add_argument("--anki", default="", help="Override AnkiConnect URL (otherwise from config)")
-
-    # chunking / generation
-    ap.add_argument("--max-chars", type=int, default=2200, help="Max chars per chunk")
-    ap.add_argument("--overlap", type=int, default=1, help="Paragraph overlap between chunks")
-    ap.add_argument("--temperature", type=float, default=0.2, help="LLM temperature")
+    # CLI overrides (optional)
+    ap.add_argument("--anki", default="", help="Override AnkiConnect URL (otherwise from anki config)")
+    ap.add_argument("--model", default="", help="Override Ollama model (otherwise from generator config)")
+    ap.add_argument("--ollama", default="", help="Override Ollama base URL (otherwise from generator config)")
+    ap.add_argument("--temperature", type=float, default=None, help="Override temperature (otherwise from generator config)")
+    ap.add_argument("--max-chars", type=int, default=None, help="Override max chars per chunk (otherwise from generator config)")
+    ap.add_argument("--overlap", type=int, default=None, help="Override paragraph overlap (otherwise from generator config)")
 
     # execution
     ap.add_argument("--dry-run", action="store_true", help="Do not send to Anki, just print JSON")
@@ -483,12 +536,30 @@ def main() -> None:
 
     input_path = validate_input_file(args.input)
 
-    cfg_path = None if args.anki_config == "" else validate_optional_config_file(args.anki_config)
-    anki_cfg = load_anki_config(cfg_path)
+    anki_cfg_path = None if args.anki_config == "" else validate_optional_config_file(args.anki_config)
+    anki_cfg = load_anki_config(anki_cfg_path)
 
-    # allow CLI override for anki url
+    gen_cfg_path = None if args.gen_config == "" else validate_optional_config_file(args.gen_config)
+    gen_cfg = load_generator_config(gen_cfg_path)
+
+    # Apply CLI overrides
     if args.anki.strip():
         anki_cfg.anki_url = args.anki.strip()
+
+    if args.model.strip():
+        gen_cfg.model = args.model.strip()
+
+    if args.ollama.strip():
+        gen_cfg.ollama_url = args.ollama.strip()
+
+    if args.temperature is not None:
+        gen_cfg.temperature = max(0.0, float(args.temperature))
+
+    if args.max_chars is not None:
+        gen_cfg.max_chars = max(200, int(args.max_chars))
+
+    if args.overlap is not None:
+        gen_cfg.overlap = max(0, int(args.overlap))
 
     # parse + chunk
     try:
@@ -501,7 +572,7 @@ def main() -> None:
     if not article.deck:
         article.deck = anki_cfg.default_deck
 
-    chunks = chunk_paragraphs(article.text, max_chars=args.max_chars, overlap_paras=args.overlap)
+    chunks = chunk_paragraphs(article.text, max_chars=gen_cfg.max_chars, overlap_paras=gen_cfg.overlap)
     if not chunks:
         print("No text chunks produced.", file=sys.stderr)
         sys.exit(2)
@@ -518,15 +589,15 @@ def main() -> None:
 
         for _attempt in range(1, 4):
             try:
-                last_raw = ollama_chat(args.ollama, args.model, SYSTEM_PROMPT, user_prompt, temperature=args.temperature)
+                last_raw = ollama_chat(gen_cfg.ollama_url, gen_cfg.model, SYSTEM_PROMPT, user_prompt, temperature=gen_cfg.temperature)
                 content = parse_json_array_strict(last_raw)
                 break
             except Exception as e:
                 last_err = e
                 try:
                     repaired = ollama_chat(
-                        args.ollama,
-                        args.model,
+                        gen_cfg.ollama_url,
+                        gen_cfg.model,
                         SYSTEM_PROMPT,
                         repair_prompt(last_raw),
                         temperature=0.0,
