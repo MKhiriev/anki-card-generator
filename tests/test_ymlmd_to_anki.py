@@ -44,7 +44,7 @@ tags: ["topic:hardware", "topic:ram"]
 
 Второй абзац.
 """
-    p = write_tmp(tmp_path, "article.ymlmd", content)
+    p = write_tmp(tmp_path, "article.yml.md", content)
     a = sut.parse_ymlmd(str(p))
 
     assert a.title == "Как устроена оперативная память"
@@ -59,7 +59,7 @@ tags: ["topic:hardware", "topic:ram"]
 
 
 def test_parse_ymlmd_requires_frontmatter(tmp_path: Path):
-    p = write_tmp(tmp_path, "bad.ymlmd", "no frontmatter here")
+    p = write_tmp(tmp_path, "bad.yml.md", "no frontmatter here")
     with pytest.raises(ValueError):
         sut.parse_ymlmd(str(p))
 
@@ -72,7 +72,7 @@ tags: ["a"]
 ---
 Body
 """
-    p = write_tmp(tmp_path, "no_title.ymlmd", content)
+    p = write_tmp(tmp_path, "no_title.yml.md", content)
     with pytest.raises(ValueError):
         sut.parse_ymlmd(str(p))
 
@@ -84,7 +84,7 @@ tags: tag1
 ---
 Body
 """
-    p = write_tmp(tmp_path, "single_tag.ymlmd", content)
+    p = write_tmp(tmp_path, "single_tag.yml.md", content)
     a = sut.parse_ymlmd(str(p))
     # expects it to become list with single tag (script supports it)
     assert "tag1" in a.tags
