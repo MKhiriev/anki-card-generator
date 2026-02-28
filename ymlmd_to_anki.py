@@ -63,7 +63,7 @@ SYSTEM_PROMPT = """Ты — движок дистилляции знаний д�
 
 
 # =========================
-# DATA MODEL
+# DATA MODELS
 # =========================
 
 @dataclass
@@ -76,15 +76,22 @@ class Article:
     slug: str
 
 
+@dataclass
+class AnkiConfig:
+    anki_url: str = "http://127.0.0.1:8765"
+    default_deck: str = "Inbox::Articles"
+    model_basic: str = "Basic"
+    model_cloze: str = "Cloze"
+    field_front: str = "Front"
+    field_back: str = "Back"
+    field_cloze_text: str = "Text"
+
+
 # =========================
-# INPUT VALIDATION (NEW)
+# INPUT VALIDATION
 # =========================
 
 def validate_input_file(path_str: str) -> Path:
-    """
-    Validates CLI input path and returns normalized Path.
-    Exits with code 1 on validation errors.
-    """
     input_path = Path(path_str).expanduser()
 
     if not input_path.exists():
@@ -112,6 +119,65 @@ def validate_input_file(path_str: str) -> Path:
     return input_path.resolve()
 
 
+def validate_optional_config_file(path_str: str) -> Optional[Path]:
+    if not path_str:
+        return None
+    p = Path(path_str).expanduser()
+    if not p.exists():
+        print(f"Error: config file does not exist: {p}", file=sys.stderr)
+        sys.exit(1)
+    if not p.is_file():
+        print(f"Error: config path is not a file: {p}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        with p.open("r", encoding="utf-8") as _:
+            pass
+    except Exception as e:
+        print(f"Error: cannot read config file '{p}': {e}", file=sys.stderr)
+        sys.exit(1)
+    return p.resolve()
+
+
+# =========================
+# CONFIG LOADING (NEW)
+# =========================
+
+def load_anki_config(config_path: Optional[Path]) -> AnkiConfig:
+    """
+    Loads AnkiConfig from JSON file.
+    Missing file -> defaults.
+    Missing keys -> defaults for those keys.
+    """
+    cfg = AnkiConfig()
+
+    if config_path is None:
+        return cfg
+
+    try:
+        raw = config_path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("Config JSON must be an object")
+    except Exception as e:
+        print(f"Error: invalid config JSON '{config_path}': {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Only allow known keys
+    def get_str(key: str, default: str) -> str:
+        v = data.get(key, default)
+        return str(v).strip() if v is not None else default
+
+    cfg.anki_url = get_str("anki_url", cfg.anki_url)
+    cfg.default_deck = get_str("default_deck", cfg.default_deck)
+    cfg.model_basic = get_str("model_basic", cfg.model_basic)
+    cfg.model_cloze = get_str("model_cloze", cfg.model_cloze)
+    cfg.field_front = get_str("field_front", cfg.field_front)
+    cfg.field_back = get_str("field_back", cfg.field_back)
+    cfg.field_cloze_text = get_str("field_cloze_text", cfg.field_cloze_text)
+
+    return cfg
+
+
 # =========================
 # CORE: PARSE / CHUNK
 # =========================
@@ -125,15 +191,8 @@ def slugify(s: str) -> str:
 
 
 def parse_ymlmd(path: str) -> Article:
-    with open(path, "r", encoding="utf-8") as f:
-        raw = f.read()
+    raw = Path(path).read_text(encoding="utf-8")
 
-    # Expect:
-    # ---
-    # key: value
-    # tags: [a, b]
-    # ---
-    # body...
     m = re.match(r"(?s)^\s*---\s*\n(.*?)\n---\s*\n(.*)$", raw)
     if not m:
         raise ValueError("Input must be ymlmd: frontmatter between --- ... --- then body text.")
@@ -170,7 +229,7 @@ def parse_ymlmd(path: str) -> Article:
         raise ValueError("Frontmatter must include: title")
 
     source_url = str(meta.get("source_url", "")).strip()
-    deck = str(meta.get("deck", "Inbox::Articles")).strip()
+    deck = str(meta.get("deck", "")).strip()  # may be empty -> fill later from config
 
     tags = meta.get("tags", [])
     if not isinstance(tags, list):
@@ -178,7 +237,6 @@ def parse_ymlmd(path: str) -> Article:
 
     slug = slugify(title)
 
-    # stable tags
     tags = list(tags) + [f"article:{slug}"]
     if source_url:
         try:
@@ -351,7 +409,7 @@ def validate_card(card: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 # =========================
-# ANKI CONNECT
+# ANKI CONNECT (uses config)
 # =========================
 
 def anki_invoke(anki_url: str, action: str, params: Dict[str, Any]) -> Any:
@@ -368,26 +426,26 @@ def ensure_deck(anki_url: str, deck: str) -> None:
     anki_invoke(anki_url, "createDeck", {"deck": deck})
 
 
-def add_note_basic(anki_url: str, deck: str, front: str, back: str, tags: List[str]) -> int:
+def add_note_basic(cfg: AnkiConfig, deck: str, front: str, back: str, tags: List[str]) -> int:
     note = {
         "deckName": deck,
-        "modelName": "Basic",
-        "fields": {"Front": front, "Back": back},
+        "modelName": cfg.model_basic,
+        "fields": {cfg.field_front: front, cfg.field_back: back},
         "tags": tags,
         "options": {"allowDuplicate": False},
     }
-    return anki_invoke(anki_url, "addNote", {"note": note})
+    return anki_invoke(cfg.anki_url, "addNote", {"note": note})
 
 
-def add_note_cloze(anki_url: str, deck: str, text: str, tags: List[str]) -> int:
+def add_note_cloze(cfg: AnkiConfig, deck: str, text: str, tags: List[str]) -> int:
     note = {
         "deckName": deck,
-        "modelName": "Cloze",
-        "fields": {"Text": text},
+        "modelName": cfg.model_cloze,
+        "fields": {cfg.field_cloze_text: text},
         "tags": tags,
         "options": {"allowDuplicate": False},
     }
-    return anki_invoke(anki_url, "addNote", {"note": note})
+    return anki_invoke(cfg.anki_url, "addNote", {"note": note})
 
 
 # =========================
@@ -396,19 +454,41 @@ def add_note_cloze(anki_url: str, deck: str, text: str, tags: List[str]) -> int:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Convert article.ymlmd -> Anki via Ollama + AnkiConnect")
+
     ap.add_argument("input", help="Path to article in ymlmd format (.ymlmd or .md)")
+
+    # NEW: anki config file
+    ap.add_argument(
+        "--anki-config",
+        default="anki_config.json",
+        help="Path to Anki config JSON (default: ./anki_config.json). Use empty string to disable.",
+    )
+
+    # LLM / runtime
     ap.add_argument("--model", default="qwen2.5:7b-instruct", help="Ollama model name")
     ap.add_argument("--ollama", default="http://127.0.0.1:11434", help="Ollama base URL")
-    ap.add_argument("--anki", default="http://127.0.0.1:8765", help="AnkiConnect URL")
+
+    # CLI override for Anki URL (optional)
+    ap.add_argument("--anki", default="", help="Override AnkiConnect URL (otherwise from config)")
+
+    # chunking / generation
     ap.add_argument("--max-chars", type=int, default=2200, help="Max chars per chunk")
     ap.add_argument("--overlap", type=int, default=1, help="Paragraph overlap between chunks")
     ap.add_argument("--temperature", type=float, default=0.2, help="LLM temperature")
+
+    # execution
     ap.add_argument("--dry-run", action="store_true", help="Do not send to Anki, just print JSON")
     ap.add_argument("--sleep", type=float, default=0.0, help="Sleep seconds between chunk requests")
     args = ap.parse_args()
 
-    # NEW: validate input file early
     input_path = validate_input_file(args.input)
+
+    cfg_path = None if args.anki_config == "" else validate_optional_config_file(args.anki_config)
+    anki_cfg = load_anki_config(cfg_path)
+
+    # allow CLI override for anki url
+    if args.anki.strip():
+        anki_cfg.anki_url = args.anki.strip()
 
     # parse + chunk
     try:
@@ -416,6 +496,10 @@ def main() -> None:
     except Exception as e:
         print(f"Error: failed to parse ymlmd '{input_path}': {e}", file=sys.stderr)
         sys.exit(2)
+
+    # deck fallback from config if missing in article
+    if not article.deck:
+        article.deck = anki_cfg.default_deck
 
     chunks = chunk_paragraphs(article.text, max_chars=args.max_chars, overlap_paras=args.overlap)
     if not chunks:
@@ -439,7 +523,6 @@ def main() -> None:
                 break
             except Exception as e:
                 last_err = e
-                # repair attempt using the same model
                 try:
                     repaired = ollama_chat(
                         args.ollama,
@@ -491,16 +574,15 @@ def main() -> None:
         print(json.dumps(all_cards, ensure_ascii=False, indent=2))
         return
 
-    # Send to Anki
-    ensure_deck(args.anki, article.deck)
+    ensure_deck(anki_cfg.anki_url, article.deck)
 
     added = 0
     for c in all_cards:
         try:
             if c["type"] == "qa":
-                add_note_basic(args.anki, article.deck, c["front"], c["back"], c.get("tags", []))
+                add_note_basic(anki_cfg, article.deck, c["front"], c["back"], c.get("tags", []))
             else:
-                add_note_cloze(args.anki, article.deck, c["text"], c.get("tags", []))
+                add_note_cloze(anki_cfg, article.deck, c["text"], c.get("tags", []))
             added += 1
         except Exception as e:
             print(f"Failed to add note: {e}", file=sys.stderr)

@@ -241,3 +241,16 @@ def test_anki_invoke_raises_on_error():
         mpost.return_value = DummyResp({"result": None, "error": "Boom"})
         with pytest.raises(RuntimeError):
             sut.anki_invoke("http://127.0.0.1:8765", "addNote", {})
+
+def test_load_anki_config_defaults_when_none():
+    cfg = sut.load_anki_config(None)
+    assert cfg.anki_url.startswith("http://127.0.0.1")
+
+
+def test_load_anki_config_from_file(tmp_path):
+    p = tmp_path / "anki_config.json"
+    p.write_text(json.dumps({"anki_url": "http://x:1", "model_basic": "MyBasic"}, ensure_ascii=False), encoding="utf-8")
+    cfg = sut.load_anki_config(p)
+    assert cfg.anki_url == "http://x:1"
+    assert cfg.model_basic == "MyBasic"
+    assert cfg.model_cloze == "Cloze"  # default preserved

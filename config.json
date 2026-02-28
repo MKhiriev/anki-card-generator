@@ -1,0 +1,9 @@
+{
+  "anki": {
+    "url": "http://127.0.0.1:8765",
+    "default_deck": "Inbox::Articles",
+    "model_basic": "Basic",
+    "model_cloze": "Cloze",
+    "allow_duplicate": false
+  }
+}
