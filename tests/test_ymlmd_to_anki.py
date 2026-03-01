@@ -242,6 +242,7 @@ def test_anki_invoke_raises_on_error():
         with pytest.raises(RuntimeError):
             sut.anki_invoke("http://127.0.0.1:8765", "addNote", {})
 
+
 def test_load_anki_config_defaults_when_none():
     cfg = sut.load_anki_config(None)
     assert cfg.anki_url.startswith("http://127.0.0.1")
