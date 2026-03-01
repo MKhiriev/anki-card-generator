@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-4-Clause
+# Copyright (c) 2026 Rasul Khiriev
+
 import json
 from pathlib import Path
 from types import SimpleNamespace
