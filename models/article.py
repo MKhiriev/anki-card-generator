@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-4-Clause
+# Copyright (c) 2026 Rasul Khiriev
+
 from dataclasses import dataclass
 from typing import List
 

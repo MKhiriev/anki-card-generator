@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-4-Clause
+# Copyright (c) 2026 Rasul Khiriev
+
 import argparse
 import json
 import sys

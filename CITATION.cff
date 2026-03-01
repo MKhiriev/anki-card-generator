@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata from this file."
+title: "Anki Card Generator"
+type: software
+authors:
+  - family-names: "Khiriev"
+    given-names: "Rasul"
+    email: "khiriev.rasul@inbox.ru"
+repository-code: "https://github.com/MKhiriev/anki-card-generator"
+url: "https://github.com/MKhiriev/anki-card-generator"
+license: "BSD-4-Clause"
+abstract: "Self-hosted Anki card generator that converts .yml.md study notes into Q&A and cloze cards using local Ollama models and AnkiConnect."
