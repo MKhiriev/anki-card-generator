@@ -25,12 +25,9 @@ Pipeline:
 - Python 3.10+
 - [Ollama](https://ollama.com/) (локально запущенный сервер)
 - [Anki](https://apps.ankiweb.net/) + AnkiConnect addon
-- Python-пакет:
+- Python-зависимости (см. `requirements.txt`):
   - `requests`
-- Для тестов:
   - `pytest`
-
-В репозитории нет `requirements.txt`/`pyproject.toml`, поэтому зависимости ставятся вручную.
 
 ## Структура проекта
 
@@ -79,7 +76,7 @@ curl http://127.0.0.1:8765
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install requests pytest
+pip install -r requirements.txt
 ```
 
 ### 3. Настроить конфиги
@@ -216,7 +213,9 @@ Done. Chunks=... Cards=... Added=... Deck='...'
 
 ## Идеи развития (из TODO)
 
-- Автотюнинг размера чанков под модель.
-- Этап `critic` для дополнительной QA-проверки карточек.
-- Новые типы источников: PDF/epub, видео/аудио, соцсети.
-- Генерация обучающих данных для последующего fine-tuning.
+Roadmap переведён в формат `MVP-first` (см. `TODO.md`):
+
+- Этап 2 (MVP): `critic` v1, подбор размера входа для Ollama, метрики качества и KPI релиза.
+- Этап 3: устойчивость и качество (улучшенный парсинг YAML, формализация контракта `critic`).
+- Этап 4: расширение источников с приоритетом `PDF -> YouTube -> остальное`.
+- Этап 5: генерация данных для fine-tuning на основе реального использования.
