@@ -1,10 +1,33 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
-import ymlmd_to_anki as sut
+from anki.anki_connect import anki_invoke
+from anki.card_validator import validate_card
+from anki.normalization import normalize_key
+from configs.anki import load_anki_config
+from input.data_slicer import chunk_paragraphs
+from input.ymlmd_parser import parse_ymlmd, slugify
+from llm.ollama import build_user_prompt, ollama_chat
+from llm.response import parse_json_array_strict
+from models.article import Article
+
+sut = SimpleNamespace(
+    slugify=slugify,
+    parse_ymlmd=parse_ymlmd,
+    chunk_paragraphs=chunk_paragraphs,
+    parse_json_array_strict=parse_json_array_strict,
+    validate_card=validate_card,
+    normalize_key=normalize_key,
+    Article=Article,
+    build_user_prompt=build_user_prompt,
+    ollama_chat=ollama_chat,
+    anki_invoke=anki_invoke,
+    load_anki_config=load_anki_config,
+)
 
 
 def write_tmp(tmp_path: Path, name: str, content: str) -> Path:
