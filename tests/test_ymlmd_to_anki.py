@@ -44,7 +44,7 @@ tags: ["topic:hardware", "topic:ram"]
 
 Второй абзац.
 """
-    p = write_tmp(tmp_path, "article.ymlmd", content)
+    p = write_tmp(tmp_path, "article.yml.md", content)
     a = sut.parse_ymlmd(str(p))
 
     assert a.title == "Как устроена оперативная память"
@@ -59,7 +59,7 @@ tags: ["topic:hardware", "topic:ram"]
 
 
 def test_parse_ymlmd_requires_frontmatter(tmp_path: Path):
-    p = write_tmp(tmp_path, "bad.ymlmd", "no frontmatter here")
+    p = write_tmp(tmp_path, "bad.yml.md", "no frontmatter here")
     with pytest.raises(ValueError):
         sut.parse_ymlmd(str(p))
 
@@ -72,7 +72,7 @@ tags: ["a"]
 ---
 Body
 """
-    p = write_tmp(tmp_path, "no_title.ymlmd", content)
+    p = write_tmp(tmp_path, "no_title.yml.md", content)
     with pytest.raises(ValueError):
         sut.parse_ymlmd(str(p))
 
@@ -84,7 +84,7 @@ tags: tag1
 ---
 Body
 """
-    p = write_tmp(tmp_path, "single_tag.ymlmd", content)
+    p = write_tmp(tmp_path, "single_tag.yml.md", content)
     a = sut.parse_ymlmd(str(p))
     # expects it to become list with single tag (script supports it)
     assert "tag1" in a.tags
@@ -241,3 +241,17 @@ def test_anki_invoke_raises_on_error():
         mpost.return_value = DummyResp({"result": None, "error": "Boom"})
         with pytest.raises(RuntimeError):
             sut.anki_invoke("http://127.0.0.1:8765", "addNote", {})
+
+
+def test_load_anki_config_defaults_when_none():
+    cfg = sut.load_anki_config(None)
+    assert cfg.anki_url.startswith("http://127.0.0.1")
+
+
+def test_load_anki_config_from_file(tmp_path):
+    p = tmp_path / "anki_config.json"
+    p.write_text(json.dumps({"anki_url": "http://x:1", "model_basic": "MyBasic"}, ensure_ascii=False), encoding="utf-8")
+    cfg = sut.load_anki_config(p)
+    assert cfg.anki_url == "http://x:1"
+    assert cfg.model_basic == "MyBasic"
+    assert cfg.model_cloze == "Cloze"  # default preserved

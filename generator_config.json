@@ -1,0 +1,7 @@
+{
+  "model": "qwen2.5:7b-instruct-q8_0",
+  "ollama_url": "http://127.0.0.1:11434",
+  "temperature": 0.2,
+  "max_chars": 2200,
+  "overlap": 1
+}
