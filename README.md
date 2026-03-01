@@ -136,13 +136,13 @@ tags: ["topic:hardware", "topic:ram"]
 ### 5. Dry-run (без отправки в Anki)
 
 ```bash
-python3 ymlmd_to_anki.py article.yml.md --dry-run --temperature 0.0
+python3 main.py article.yml.md --dry-run --temperature 0.0
 ```
 
 ### 6. Реальная отправка в Anki
 
 ```bash
-python3 ymlmd_to_anki.py article.yml.md --temperature 0.0
+python3 main.py article.yml.md --temperature 0.0
 ```
 
 Пример финального лога:
