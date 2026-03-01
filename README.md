@@ -33,7 +33,7 @@ Pipeline:
 
 ```text
 anki-card-generator/
-├── ymlmd_to_anki.py          # CLI-оркестратор всего пайплайна
+├── main.py          # CLI-оркестратор всего пайплайна
 ├── anki/
 │   ├── anki_connect.py       # вызовы AnkiConnect, addNote/createDeck
 │   ├── card_validator.py     # валидация карточек (qa/cloze)
