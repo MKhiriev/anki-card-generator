@@ -148,7 +148,7 @@ python3 main.py article.yml.md --temperature 0.0
 Пример финального лога:
 
 ```text
-Done. Chunks=... Cards=... Added=... Deck='...'
+Done. Chunks=... Cards=... Added=... Failed=... Deck='...'
 ```
 
 ## CLI параметры
@@ -158,6 +158,7 @@ Done. Chunks=... Cards=... Added=... Deck='...'
 - `input` — путь к `.ymlmd` или `.md`
 - `--dry-run` — только вывести JSON карточек
 - `--sleep` — пауза между chunk-запросами к LLM
+- `-v/--verbose` — подробные логи (`-v` подробно, `-vv` максимально детально)
 
 Пути к конфигам:
 

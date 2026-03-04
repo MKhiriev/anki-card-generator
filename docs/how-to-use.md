@@ -21,7 +21,7 @@ Both must return JSON.
 ## 2. Project Structure
 
     anki-card-generator/
-    ├── ymlmd_to_anki.py
+    ├── main.py
     ├── anki_config.json
     ├── generator_config.json
     ├── article.yml.md
@@ -101,7 +101,7 @@ python3 main.py article.yml.md --temperature 0.0
 
 Expected result:
 
-    Done. Chunks=... Cards=... Added=... Deck='...'
+    Done. Chunks=... Cards=... Added=... Failed=... Deck='...'
 
 Cards will appear in the configured deck.
 
@@ -138,6 +138,13 @@ Disable config files:
 ``` bash
 --anki-config ""
 --gen-config ""
+```
+
+Verbose logging:
+
+``` bash
+-v
+-vv
 ```
 
 ------------------------------------------------------------------------
